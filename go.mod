@@ -1,4 +1,4 @@
-module github.com/slashformotion/blocky-privdate
+module github.com/slashformotion/blocky-privdrop
 
 go 1.26.4
 
