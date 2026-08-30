@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -31,11 +31,25 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Build binary
-        run: CGO_ENABLED=0 go build -trimpath -o blocky-privdrop .
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binary (linux/${{ matrix.goarch }})
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} go build -trimpath -o blocky-privdrop .
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: blocky-privdrop-linux-amd64
+          name: blocky-privdrop-linux-${{ matrix.goarch }}
           path: blocky-privdrop
           if-no-files-found: error
