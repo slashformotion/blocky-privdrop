@@ -69,36 +69,28 @@ jobs:
           go vet ./...
           CGO_ENABLED=0 go build ./...
 
-      - name: Commit and push bump
+      - name: Commit, tag, and push
         if: steps.resolve.outputs.changed == 'true'
+        env:
+          TAG: ${{ steps.resolve.outputs.latest }}
         run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists on the remote" >&2
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add go.mod go.sum
-          git commit -m "chore: bump blocky to ${{ steps.resolve.outputs.latest }}"
-          git push
+          git commit -m "chore: bump blocky to $TAG"
+          git tag "$TAG"
+          git push origin main "refs/tags/$TAG"
 
-      - name: Build release binaries
-        if: steps.resolve.outputs.changed == 'true'
-        run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/blocky-privdrop-linux-amd64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o dist/blocky-privdrop-linux-arm64 .
-
-      - name: Tag and create release
+      - name: Trigger release workflow
         if: steps.resolve.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.resolve.outputs.latest }}
-        run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists, skipping release creation" >&2
-            exit 1
-          fi
-          gh release create "$TAG" dist/* \
-            --title "$TAG" \
-            --notes "Bundles [blocky $TAG](https://github.com/${UPSTREAM_REPO}/releases/tag/$TAG).
-
-          Binaries must run as root or with \`CAP_NET_SETGID\`, \`CAP_NET_SETUID\`, and \`CAP_SETCAP\`; see the README."
+        run: gh workflow run release.yml --ref "$TAG"
 
       - name: Open issue on failed bump
         if: failure() && steps.resolve.outputs.changed == 'true'
