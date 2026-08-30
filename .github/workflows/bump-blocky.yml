@@ -1,0 +1,115 @@
+name: Bump blocky
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Blocky version to bump to (e.g. v0.35.0). Defaults to latest release."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: bump-blocky
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: 0xERR0R/blocky
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Resolve versions
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            latest="$INPUT_VERSION"
+          else
+            latest=$(gh api "repos/${UPSTREAM_REPO}/releases/latest" --jq .tag_name)
+          fi
+          case "$latest" in
+            v[0-9]*) ;;
+            *) echo "Invalid blocky version: $latest" >&2; exit 1 ;;
+          esac
+          current=$(go list -m -f '{{.Version}}' github.com/0xERR0R/blocky)
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "changed=$([ "$latest" != "$current" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "Pinned: $current, upstream: $latest"
+
+      - name: Skip if already up to date
+        if: steps.resolve.outputs.changed != 'true'
+        run: echo "Already on blocky ${{ steps.resolve.outputs.current }}, nothing to do."
+
+      - name: Bump blocky to ${{ steps.resolve.outputs.latest }}
+        if: steps.resolve.outputs.changed == 'true'
+        run: |
+          go get "github.com/0xERR0R/blocky@${{ steps.resolve.outputs.latest }}"
+          go mod tidy
+
+      - name: Verify build against new version
+        if: steps.resolve.outputs.changed == 'true'
+        run: |
+          go vet ./...
+          CGO_ENABLED=0 go build ./...
+
+      - name: Commit and push bump
+        if: steps.resolve.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add go.mod go.sum
+          git commit -m "chore: bump blocky to ${{ steps.resolve.outputs.latest }}"
+          git push
+
+      - name: Build release binaries
+        if: steps.resolve.outputs.changed == 'true'
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/blocky-privdrop-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o dist/blocky-privdrop-linux-arm64 .
+
+      - name: Tag and create release
+        if: steps.resolve.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.resolve.outputs.latest }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists, skipping release creation" >&2
+            exit 1
+          fi
+          gh release create "$TAG" dist/* \
+            --title "$TAG" \
+            --notes "Bundles [blocky $TAG](https://github.com/${UPSTREAM_REPO}/releases/tag/$TAG).
+
+          Binaries must run as root or with \`CAP_NET_SETGID\`, \`CAP_NET_SETUID\`, and \`CAP_SETCAP\`; see the README."
+
+      - name: Open issue on failed bump
+        if: failure() && steps.resolve.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.resolve.outputs.latest }}
+        run: |
+          title="Bump to blocky $TAG failed"
+          existing=$(gh issue list --state open --search "$title" --json number --jq 'length')
+          if [ "$existing" -eq 0 ]; then
+            gh issue create \
+              --title "$title" \
+              --body "The automated bump from ${{ steps.resolve.outputs.current }} to $TAG failed. See the run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
