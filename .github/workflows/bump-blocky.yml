@@ -85,13 +85,6 @@ jobs:
           git tag "$TAG"
           git push origin main "refs/tags/$TAG"
 
-      - name: Trigger release workflow
-        if: steps.resolve.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.resolve.outputs.latest }}
-        run: gh workflow run release.yml --ref "$TAG"
-
       - name: Open issue on failed bump
         if: failure() && steps.resolve.outputs.changed == 'true'
         env:
