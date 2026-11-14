@@ -4,7 +4,7 @@ go 1.26.9
 
 require (
 	github.com/0xERR0R/blocky v0.36.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 )
 
 require (
